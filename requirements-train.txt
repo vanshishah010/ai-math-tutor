@@ -1,0 +1,11 @@
+# Training dependencies for fine-tuning LoRA on Colab / Kaggle GPU
+torch>=2.0.0
+transformers==4.51.3
+peft==0.15.2
+trl==0.17.0
+accelerate==1.6.0
+bitsandbytes>=0.43.0
+datasets>=2.18.0
+kagglehub>=0.2.0
+pyyaml>=6.0
+sympy>=1.12

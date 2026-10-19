@@ -1,0 +1,4 @@
+Mode,Total,Correct,Overall Accuracy (%),95% CI Lower (%),95% CI Upper (%),Format Compliance (%),gsm8k_official Acc (%)
+SYMPY,50,0,0.00,0.00,7.13,0.00,0.00
+BASE,50,38,76.00,62.59,85.70,0.00,76.00
+FINE-TUNED,50,32,64.00,50.14,75.86,100.00,64.00

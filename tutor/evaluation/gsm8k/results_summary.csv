@@ -1,0 +1,2 @@
+Mode,Total,Correct,Overall Accuracy (%),95% CI Lower (%),95% CI Upper (%),Format Compliance (%),huggingface_gsm8k Acc (%),huggingface_metamath Acc (%),sympy Acc (%)
+SYMPY,10,3,30.00,10.78,60.32,30.00,0.00,0.00,100.00

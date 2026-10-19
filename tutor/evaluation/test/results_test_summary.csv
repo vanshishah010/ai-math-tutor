@@ -1,0 +1,4 @@
+Mode,Total,Correct,Overall Accuracy (%),95% CI Lower (%),95% CI Upper (%),Format Compliance (%),huggingface_gsm8k Acc (%),huggingface_metamath Acc (%),sympy Acc (%)
+SYMPY,150,53,35.33,28.14,43.26,35.33,0.00,0.00,100.00
+BASE,150,124,82.67,75.81,87.89,1.33,93.90,80.00,66.04
+FINE-TUNED,150,128,85.33,78.79,90.11,99.33,81.71,86.67,90.57

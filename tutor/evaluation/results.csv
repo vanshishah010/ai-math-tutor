@@ -1,0 +1,23 @@
+Problem ID,Source,Problem,Expected Answer,SYMPY Extracted Answer,SYMPY Raw Output,SYMPY Correct,SYMPY Format Compliant
+1,huggingface_gsm8k,"Alex is saving up for a new car. He already has $14,500 saved up and the car costs $14,600. He decides that to make the last of the money he will deliver groceries for people in the neighborhood.  He charges $1.5 per trip and then 5% of the price of the groceries. If he makes 40 trips and has saved up enough, how many dollars' worth of groceries did he deliver?",800,,Could not parse or solve problem.,False,False
+2,huggingface_gsm8k,"Elvis is releasing a new album with 10 songs, but he doesn't want to waste too much time on writing. He spends 5 hours in the studio, where he writes, records, and edits his songs. Each song takes 12 minutes to record, then it takes 30 minutes to edit all of his songs.   How many minutes did it take Elvis to write each song, if each song took the same amount of time to write?",15,,Could not parse or solve problem.,False,False
+3,sympy,Expand (4*x - 1)^2,16*x**2 - 8*x + 1,16*x**2 - 8*x + 1,"Step 1: Identify Expression to Expand — Start with the unexpanded expression: `(4*x - 1)**2`.
+Step 2: Apply Distributive Law / FOIL — Multiply factors and expand all brackets: `16*x**2 - 8*x + 1`.
+Final answer: 16*x**2 - 8*x + 1",True,True
+4,huggingface_metamath,"If the ratio of $b$ to $a$ is 3, then what is the value of $a$ when $b=12-5a$?",\frac{3}{2},,Could not parse or solve problem.,False,False
+5,huggingface_gsm8k,"Monica and Sheila are twins. Their mother gave them $50 and told them to buy some toilet paper and spend the remainder on groceries. The toilet paper cost $12. They bought apples, butter, eggs, and a large ham for twice the cost of the toilet paper. Since they still had some leftover money, they called their mother and she gave them permission to buy whatever they wanted for themselves as long as they shared the money evenly. They saw some boots they really liked, but a pair of boots costs 3 times the amount they had left. How much more would Monica and Sheila each have to add of their own money to buy two pairs of boots?",35,,Could not parse or solve problem.,False,False
+6,huggingface_gsm8k,"Beth bakes 4, 2 dozen batches of cookies in a week.  If these cookies are shared amongst 16 people equally, how many cookies does each person consume?",6,,Could not parse or solve problem.,False,False
+7,sympy,Solve for x: x^2 - 25*x + 114 = 0,"x = 6, x = 19","x = 6, x = 19","Step 1: Identify the Equation — Start with the given equation: `Eq(x**2 - 25*x + 114, 0)`.
+Step 2: Identify Coefficients and Discriminant — In the quadratic form $ax^2 + bx + c = 0$, we have $a = 1$, $b = -25$, and $c = 114$.
+Compute the discriminant $\Delta = b^2 - 4ac = (-25)^2 - 4(1)(114) = 169$.
+Step 3: Factor the Quadratic Expression — Factor the quadratic polynomial into linear factors: `(x - 19)*(x - 6) = 0`.
+Step 4: Final Solution — The resulting solution(s) for `x` are: x = 6, x = 19.
+Final answer: x = 6, x = 19",True,True
+8,huggingface_gsm8k,Matilda bought a smartphone for $300. Then she decided she wouldn't use it anyway and sold it for $255. What percentage of the initial cost did she lose?,15,,Could not parse or solve problem.,False,False
+9,huggingface_gsm8k,The electricity price in Coco's town is $0.10 per kW. Coco's new oven has a consumption rate of 2.4 kWh (kilowatt-hours). How much will Coco pay for using his oven only if he used it for a total of 25 hours last month?,6,,Could not parse or solve problem.,False,False
+10,sympy,Solve for x: -3*x - 23 = -94,x = 71/3 = 23.67,x = 71/3 = 23.67,"Step 1: Identify the Equation — Start with the given equation: `Eq(-3*x - 23, -94)`.
+Step 2: Rearrange to Standard Form — Subtract `-94` from both sides so all terms are on the left-hand side.
+Step 3: Isolate the Variable Term — Subtract the constant term `71` from both sides.
+Step 4: Divide by the Coefficient — Divide both sides by the coefficient of `x` (which is `-3`).
+Step 5: Final Solution — The resulting solution(s) for `x` are: x = 71/3 = 23.67.
+Final answer: x = 71/3 = 23.67",True,True

@@ -1,0 +1,29 @@
+{
+  "total_samples": 10211,
+  "splits": {
+    "train": 9189,
+    "val": 510,
+    "test": 512
+  },
+  "source_counts": {
+    "sympy": 3510,
+    "huggingface_gsm8k": 5500,
+    "huggingface_metamath": 1201
+  },
+  "dropped_reasons": {
+    "dropped_arithmetic": 234,
+    "dropped_final_answer_mismatch": 6,
+    "dropped_dupes": 268,
+    "dropped_length": 31,
+    "dropped_empty": 1
+  },
+  "cleaned_hash_artifacts_count": 6584,
+  "avg_character_length": {
+    "sympy": 445.2,
+    "huggingface_gsm8k": 284.5,
+    "huggingface_metamath": 536.2,
+    "overall": 369.3
+  },
+  "avg_token_length_estimate": 143.4,
+  "seed": 42
+}
