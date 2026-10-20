@@ -16,6 +16,7 @@ Provides:
 from __future__ import annotations
 
 import datetime
+import re
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -32,6 +33,37 @@ if str(ROOT_DIR) not in sys.path:
 from tutor.core.graphing import MathPlotter
 from tutor.core.ocr import LocalMathOCR
 from tutor.core.parser import MathParser
+
+# Import math display helpers with safe fallbacks if tutor/core/parser.py on Colab is not yet updated
+try:
+    from tutor.core.parser import format_math_display, format_to_html_math, to_latex_equation
+except ImportError:
+    def format_math_display(expr: Any) -> str:
+        if expr is None:
+            return ""
+        s = str(expr).strip()
+        if s.startswith("Eq(") and s.endswith(")"):
+            s = s[3:-1].replace(",", " =", 1)
+        s = re.sub(r"(\b\d+)\s*\*\s*([a-zA-Z\(])", r"\1\2", s)
+        s = s.replace("**", "^").replace("*", " · ")
+        return s
+
+    def format_to_html_math(expr: Any) -> str:
+        s = format_math_display(expr)
+        return re.sub(
+            r"\^([0-9a-zA-Z+-]+)",
+            r'<sup style="font-size: 0.72em; vertical-align: super; line-height: 0;">\1</sup>',
+            s,
+        )
+
+    def to_latex_equation(expr: Any) -> str:
+        if expr is None:
+            return ""
+        try:
+            return sp.latex(sp.sympify(str(expr)))
+        except Exception:
+            return str(expr)
+
 from tutor.core.solver import SymPySolver, TutorSolution
 from tutor.core.tutor import MathTutor
 from tutor.core.verifier import StepFeedback
@@ -415,10 +447,14 @@ def get_ai_tutor() -> Optional[MathTutor]:
 
     Raises RuntimeError on failure so that only a successfully loaded model is cached.
     """
+    adapter_dir = ROOT_DIR / "models" / "qwen2.5-math-tutor-lora"
+    if not adapter_dir.exists():
+        adapter_dir = Path("models/qwen2.5-math-tutor-lora")
+
     tutor_ai = MathTutor(
         default_variable="x",
         enable_llm=True,
-        adapter_path="models/qwen2.5-math-tutor-lora",
+        adapter_path=str(adapter_dir),
         device="cuda",
     )
     explainer = tutor_ai._get_explainer()
@@ -448,7 +484,10 @@ def resolve_tutor(use_ai: bool) -> Tuple[MathTutor, bool]:
 
 def check_gpu_and_dependencies() -> Tuple[bool, str]:
     """Verify GPU availability, PyTorch, and adapter artifacts for AI mode."""
-    adapter_path = Path("models/qwen2.5-math-tutor-lora")
+    adapter_path = ROOT_DIR / "models" / "qwen2.5-math-tutor-lora"
+    if not adapter_path.exists():
+        adapter_path = Path("models/qwen2.5-math-tutor-lora")
+
     if not adapter_path.exists() or not (adapter_path / "adapter_config.json").exists():
         return False, "Adapter folder 'models/qwen2.5-math-tutor-lora' not found. AI mode needs the fine-tuned adapter, using the SymPy tutor instead."
     try:
@@ -503,14 +542,146 @@ def add_to_history(operation: str, query: str, result: str, latex: str, engine_m
     st.session_state["history"].insert(0, entry)
 
 
-def load_preloaded_expression(expr: str, target_key: str, auto_run: bool = True):
-    """Populate the expression directly into the target input box and trigger execution."""
-    st.session_state[target_key] = expr
+def load_preloaded_expression(expr: str, target_key: str, auto_run: bool = True, target_ws: Optional[str] = None):
+    """Populate the expression directly into the target input box and trigger execution.
+    
+    Designed to work seamlessly as a Streamlit on_click callback so that
+    st.session_state[target_key] is updated before the target widget is instantiated.
+    """
+    clean_expr = format_math_display(expr) if expr else ""
+    st.session_state[target_key] = clean_expr
     st.session_state["last_solution"] = None
     st.session_state["student_steps"] = []
     if auto_run:
         st.session_state["auto_solve"] = True
-    st.rerun()
+    if target_ws and "selected_workspace_radio" in st.session_state:
+        st.session_state["selected_workspace_radio"] = target_ws
+
+
+def render_practice_arena(tutor: MathTutor, problem: str, operation: str, variable: str, target_key: str):
+    """Interactive Quiz & Practice Problem Generator for reinforcing learned math concepts."""
+    with st.expander("🎯 Interactive Quiz & Practice Arena (3 Similar Problems)", expanded=True):
+        st.markdown(
+            f"""
+            <div style="font-size: 0.9rem; color: #475569; margin-bottom: 10px;">
+                Reinforce what you just learned! Test your skills on 3 generated problems similar to <code>{format_math_display(problem)}</code>.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        col_diff, col_gen = st.columns([3, 2])
+        with col_diff:
+            diff = st.radio(
+                "Select Difficulty Tier:",
+                options=["Easy", "Medium", "Hard"],
+                index=1,
+                horizontal=True,
+                key=f"quiz_diff_{target_key}",
+            )
+        with col_gen:
+            st.markdown("<div style='height: 24px;'></div>", unsafe_allow_html=True)
+            gen_btn = st.button("🎲 Generate New Problems", key=f"quiz_gen_{target_key}", use_container_width=True)
+
+        storage_key = f"quiz_problems_{target_key}"
+        curr_source_key = f"quiz_source_{target_key}"
+
+        # Generate on button click or if difficulty / problem changed
+        if gen_btn or (storage_key not in st.session_state) or (st.session_state.get(curr_source_key) != (problem, diff)):
+            try:
+                if hasattr(tutor, "generate_practice"):
+                    st.session_state[storage_key] = tutor.generate_practice(
+                        problem=problem,
+                        operation=operation,
+                        difficulty=diff,
+                        count=3,
+                        variable=variable,
+                    )
+                else:
+                    from tutor.core.practice import PracticeGenerator
+                    generator = PracticeGenerator(solver=getattr(tutor, "solver", None))
+                    st.session_state[storage_key] = generator.generate(
+                        problem=problem,
+                        operation=operation,
+                        difficulty=diff,
+                        count=3,
+                        variable=variable,
+                    )
+                st.session_state[curr_source_key] = (problem, diff)
+            except Exception as e:
+                st.warning(f"Could not automatically generate practice problems: {e}")
+                # Provide lightweight fallback problems so the quiz arena is never blank
+                from tutor.core.practice import PracticeProblem
+                fallback_probs = [
+                    PracticeProblem(id=1, problem=f"2*{variable} + 5 = 15", operation="solve", difficulty="Easy", variable=variable, expected_answer=f"{variable} = 5", expected_answer_latex=f"{variable} = 5", hint="Subtract 5 from both sides, then divide by 2.", problem_type="linear_eq"),
+                    PracticeProblem(id=2, problem=f"3*{variable} - 4 = 11", operation="solve", difficulty="Medium", variable=variable, expected_answer=f"{variable} = 5", expected_answer_latex=f"{variable} = 5", hint="Add 4 to both sides, then divide by 3.", problem_type="linear_eq"),
+                    PracticeProblem(id=3, problem=f"5*{variable} + 2 = 3*{variable} + 12", operation="solve", difficulty="Hard", variable=variable, expected_answer=f"{variable} = 5", expected_answer_latex=f"{variable} = 5", hint="Subtract 3x from both sides, then subtract 2.", problem_type="linear_eq"),
+                ] if operation == "solve" else [
+                    PracticeProblem(id=1, problem=f"({variable} + 2)*({variable} + 3)", operation="expand", difficulty="Easy", variable=variable, expected_answer=f"{variable}**2 + 5*{variable} + 6", expected_answer_latex=f"{variable}^2 + 5{variable} + 6", hint="Use the FOIL method.", problem_type="expansion"),
+                    PracticeProblem(id=2, problem=f"2*({variable} + 4)", operation="expand", difficulty="Easy", variable=variable, expected_answer=f"2*{variable} + 8", expected_answer_latex=f"2{variable} + 8", hint="Distribute the 2.", problem_type="expansion"),
+                    PracticeProblem(id=3, problem=f"({variable} - 1)*({variable} + 5)", operation="expand", difficulty="Medium", variable=variable, expected_answer=f"{variable}**2 + 4*{variable} - 5", expected_answer_latex=f"{variable}^2 + 4{variable} - 5", hint="Multiply terms pairwise.", problem_type="expansion"),
+                ]
+                st.session_state[storage_key] = fallback_probs
+                st.session_state[curr_source_key] = (problem, diff)
+
+        practice_items = st.session_state.get(storage_key, [])
+        if practice_items:
+            for idx, p in enumerate(practice_items, start=1):
+                clean_prob_text = format_math_display(p.problem)
+                clean_prob_html = format_to_html_math(p.problem)
+                st.markdown(
+                    f"""
+                    <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px 16px; margin-top: 10px; margin-bottom: 8px; border-left: 4px solid #3b82f6;">
+                        <span style="font-size: 0.72rem; font-weight: 700; color: #1d4ed8; background: #eff6ff; padding: 2px 7px; border-radius: 4px;">Problem {idx} &bull; {p.difficulty}</span>
+                        <div style="font-size: 1.15rem; font-family: monospace; font-weight: 600; color: #0f172a; margin-top: 6px;">
+                            {clean_prob_html}
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+
+                col_ans, col_chk, col_load = st.columns([3, 1.2, 1.2])
+                with col_ans:
+                    student_ans = st.text_input(
+                        f"Your answer for #{idx}:",
+                        placeholder="e.g. x = 2, x = 3",
+                        key=f"q_ans_{target_key}_{idx}_{clean_prob_text}",
+                        label_visibility="collapsed",
+                    )
+                with col_chk:
+                    check_clicked = st.button(
+                        "Check Answer",
+                        key=f"btn_chk_{target_key}_{idx}_{clean_prob_text}",
+                        use_container_width=True,
+                    )
+                with col_load:
+                    st.button(
+                        "📥 Solver",
+                        key=f"btn_load_{target_key}_{idx}_{clean_prob_text}",
+                        use_container_width=True,
+                        help="Load problem into solver for full steps",
+                        on_click=load_preloaded_expression,
+                        args=(clean_prob_text, target_key, True),
+                    )
+
+                if check_clicked:
+                    if student_ans.strip():
+                        if hasattr(tutor, "check_practice_answer"):
+                            is_corr, msg = tutor.check_practice_answer(student_ans, p.expected_answer, variable=variable)
+                        else:
+                            from tutor.core.practice import PracticeGenerator
+                            generator = PracticeGenerator(solver=getattr(tutor, "solver", None))
+                            is_corr, msg = generator.check_answer(student_ans, p.expected_answer, variable=variable)
+                        if is_corr:
+                            st.success(f"✅ {msg}")
+                        else:
+                            st.error(f"❌ {msg}")
+                    else:
+                        st.warning("Please type your answer above before checking.")
+
+                with st.expander(f"💡 Need a hint for Problem {idx}?", expanded=False):
+                    st.info(format_math_display(p.hint))
 
 
 # -----------------------------------------------------------------------------
@@ -525,6 +696,7 @@ with st.sidebar:
         "Mathematical Operations",
         list(WORKSPACE_CONFIG.keys()),
         index=0,
+        key="selected_workspace_radio",
     )
 
     st.markdown("---")
@@ -622,9 +794,15 @@ def render_preloaded_tray(examples: List[str], target_key: str):
     cols = st.columns(min(len(examples), 5))
     for i, ex in enumerate(examples):
         col_idx = i % len(cols)
+        clean_ex = format_math_display(ex)
         with cols[col_idx]:
-            if st.button(ex, key=f"btn_preload_{target_key}_{i}", use_container_width=True):
-                load_preloaded_expression(ex, target_key, auto_run=True)
+            st.button(
+                clean_ex,
+                key=f"btn_preload_{target_key}_{i}",
+                use_container_width=True,
+                on_click=load_preloaded_expression,
+                args=(clean_ex, target_key, True),
+            )
 
 
 # -----------------------------------------------------------------------------
@@ -654,8 +832,13 @@ def render_offline_ocr_drawer(target_key: str):
                     if ocr_text:
                         st.success(f"**Recognized Text:** `{ocr_text}`")
                         st.caption(f"Engine: {ocr_engine}")
-                        if st.button("📥 Insert into Input Box & Perform", key=f"btn_ocr_insert_{target_key}", type="primary"):
-                            load_preloaded_expression(ocr_text, target_key, auto_run=True)
+                        st.button(
+                            "📥 Insert into Input Box & Perform",
+                            key=f"btn_ocr_insert_{target_key}",
+                            type="primary",
+                            on_click=load_preloaded_expression,
+                            args=(ocr_text, target_key, True),
+                        )
                     else:
                         st.warning("No clear mathematical text detected. Try uploading a higher-contrast crop.")
             except Exception as e:
@@ -739,11 +922,14 @@ if selected_workspace == "🧮 Equation Solving":
                             st.error(f"❌ {feedback.message}")
                             if feedback.hint:
                                 st.info(f"💡 Hint: {feedback.hint}")
+
         else:
             st.error(f"Could not solve: {sol.error_message}")
             st.info("Tip: Ensure the equation includes an '=' sign and valid single-variable terms.")
     elif not sol:
         st.markdown('<div class="empty-state">Select a preloaded function above or enter an equation to compute exact symbolic roots.</div>', unsafe_allow_html=True)
+
+    render_practice_arena(tutor, user_query or cfg["default"], operation="solve", variable=default_var, target_key=ws_key)
 
 
 # -----------------------------------------------------------------------------
@@ -794,10 +980,13 @@ elif selected_workspace == "🔍 Simplification":
                     if s.latex:
                         st.latex(s.latex)
                     st.markdown("---")
+
         else:
             st.error(f"Could not simplify: {sol.error_message}")
     elif not sol:
         st.markdown('<div class="empty-state">Select a preloaded expression or enter a formula to reduce and simplify terms.</div>', unsafe_allow_html=True)
+
+    render_practice_arena(tutor, user_query or cfg["default"], operation="simplify", variable=default_var, target_key=ws_key)
 
 
 # -----------------------------------------------------------------------------
@@ -847,10 +1036,13 @@ elif selected_workspace == "🧩 Factorisation":
                     st.markdown(s.description)
                     if s.latex:
                         st.latex(s.latex)
+
         else:
             st.error(f"Could not factor: {sol.error_message}")
     elif not sol:
         st.markdown('<div class="empty-state">Select a preloaded polynomial or enter terms to factor into linear components.</div>', unsafe_allow_html=True)
+
+    render_practice_arena(tutor, user_query or cfg["default"], operation="factor", variable=default_var, target_key=ws_key)
 
 
 # -----------------------------------------------------------------------------
@@ -900,10 +1092,13 @@ elif selected_workspace == "📐 Expansion":
                     st.markdown(s.description)
                     if s.latex:
                         st.latex(s.latex)
+
         else:
             st.error(f"Could not expand: {sol.error_message}")
     elif not sol:
         st.markdown('<div class="empty-state">Select a preloaded product or enter binomial terms to expand.</div>', unsafe_allow_html=True)
+
+    render_practice_arena(tutor, user_query or cfg["default"], operation="expand", variable=default_var, target_key=ws_key)
 
 
 # -----------------------------------------------------------------------------
@@ -979,10 +1174,13 @@ elif selected_workspace == "📈 Differentiation":
                         st.info("Graph could not be plotted for this function on the selected interval.")
                 except Exception as ex:
                     st.info(f"Graph rendering skipped: {ex}")
+
         else:
             st.error(f"Differentiation failed: {sol.error_message}")
     elif not sol:
         st.markdown('<div class="empty-state">Select a preloaded function above or type an expression to differentiate and render dual curves.</div>', unsafe_allow_html=True)
+
+    render_practice_arena(tutor, user_query or cfg["default"], operation="diff", variable=default_var, target_key=ws_key)
 
 
 # -----------------------------------------------------------------------------
@@ -1069,10 +1267,13 @@ elif selected_workspace == "📉 Integration":
                         st.info("Graph could not be plotted for this function on the selected interval.")
                 except Exception as ex:
                     st.info(f"Graph rendering skipped: {ex}")
+
         else:
             st.error(f"Integration failed: {sol.error_message}")
     elif not sol:
         st.markdown('<div class="empty-state">Select a preloaded integrand or enter a function to compute antiderivatives or evaluate signed area.</div>', unsafe_allow_html=True)
+
+    render_practice_arena(tutor, user_query or cfg["default"], operation="integrate", variable=default_var, target_key=ws_key)
 
 
 # -----------------------------------------------------------------------------
@@ -1159,5 +1360,9 @@ elif selected_workspace == "🕒 Calculation History":
                     target_ws = op_to_ws.get(item["operation"])
                     if target_ws and target_ws in WORKSPACE_CONFIG:
                         target_key = WORKSPACE_CONFIG[target_ws]["key"]
-                        if st.button(f"📥 Reload into {item['operation']}", key=f"hist_reload_{idx}"):
-                            load_preloaded_expression(item["input"], target_key, auto_run=True)
+                        st.button(
+                            f"📥 Reload into {item['operation']}",
+                            key=f"hist_reload_{idx}",
+                            on_click=load_preloaded_expression,
+                            args=(item["input"], target_key, True, target_ws),
+                        )
