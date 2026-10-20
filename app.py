@@ -34,35 +34,89 @@ from tutor.core.graphing import MathPlotter
 from tutor.core.ocr import LocalMathOCR
 from tutor.core.parser import MathParser
 
-# Import math display helpers with safe fallbacks if tutor/core/parser.py on Colab is not yet updated
-try:
-    from tutor.core.parser import format_math_display, format_to_html_math, to_latex_equation
-except ImportError:
-    def format_math_display(expr: Any) -> str:
-        if expr is None:
-            return ""
-        s = str(expr).strip()
-        if s.startswith("Eq(") and s.endswith(")"):
-            s = s[3:-1].replace(",", " =", 1)
-        s = re.sub(r"(\b\d+)\s*\*\s*([a-zA-Z\(])", r"\1\2", s)
-        s = s.replace("**", "^").replace("*", " · ")
-        return s
+UNICODE_SUPERSCRIPTS = {
+    "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴",
+    "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹",
+    "+": "⁺", "-": "⁻", "n": "ⁿ", "m": "ᵐ", "k": "ᵏ",
+    "(": "⁽", ")": "⁾",
+}
 
-    def format_to_html_math(expr: Any) -> str:
-        s = format_math_display(expr)
-        return re.sub(
-            r"\^([0-9a-zA-Z+-]+)",
-            r'<sup style="font-size: 0.72em; vertical-align: super; line-height: 0;">\1</sup>',
-            s,
-        )
 
-    def to_latex_equation(expr: Any) -> str:
-        if expr is None:
-            return ""
-        try:
-            return sp.latex(sp.sympify(str(expr)))
-        except Exception:
-            return str(expr)
+def to_superscript(exp_str: str) -> str:
+    """Convert exponent string into unicode superscript characters."""
+    exp_str = exp_str.strip().strip("()")
+    if all(c in UNICODE_SUPERSCRIPTS for c in exp_str):
+        return "".join(UNICODE_SUPERSCRIPTS[c] for c in exp_str)
+    return f"^{exp_str}"
+
+
+def format_math_display(expr: Any) -> str:
+    """Format mathematical expression/equation into clean human-readable notation.
+
+    Converts raw powers '**2' or '^2' to floating superscripts '²'.
+    Strips explicit '*' multiplication between coefficients, variables, and parentheses.
+    """
+    if expr is None:
+        return ""
+    if isinstance(expr, sp.Eq):
+        return f"{format_math_display(expr.lhs)} = {format_math_display(expr.rhs)}"
+
+    s = sp.sstr(expr) if not isinstance(expr, str) else expr.strip()
+
+    # Unwrap Eq(...) string representation
+    eq_match = re.match(r"^Eq\((.*),\s*(.*)\)$", s)
+    if eq_match:
+        return f"{format_math_display(eq_match.group(1))} = {format_math_display(eq_match.group(2))}"
+
+    # Convert powers **(...) or **n or ^n to floating superscripts
+    s = re.sub(r"\*\*\(([^)]+)\)", lambda m: to_superscript(m.group(1)), s)
+    s = re.sub(r"\*\*([0-9a-zA-Z+-]+)", lambda m: to_superscript(m.group(1)), s)
+    s = re.sub(r"\^([0-9a-zA-Z+-]+)", lambda m: to_superscript(m.group(1)), s)
+
+    # Clean multiplication signs
+    s = re.sub(r"\)\s*\*\s*\(", ")(", s)
+    s = re.sub(r"(\b\d+)\s*\*\s*([a-zA-Z\(])", r"\1\2", s)
+    s = re.sub(r"([a-zA-Z])\s*\*\s*\(", r"\1(", s)
+    s = re.sub(r"\)\s*\*\s*([a-zA-Z])", r")\1", s)
+    s = re.sub(r"([a-zA-Z0-9⁰¹²³⁴⁵⁶⁷⁸⁹]+)\s*\*\s*([a-zA-Z]+(?:\([^)]*\))?)", r"\1 \2", s)
+    s = re.sub(r"\s*\*\s*", " · ", s)
+
+    s = re.sub(r"\+\s*-", "- ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def format_to_html_math(expr: Any) -> str:
+    """Format mathematical expression into HTML with true floating <sup> tags."""
+    clean = format_math_display(expr)
+    rev_supers = {v: k for k, v in UNICODE_SUPERSCRIPTS.items()}
+
+    def _sub_html_super(m):
+        inner = "".join(rev_supers.get(c, c) for c in m.group(0))
+        return f'<sup style="font-size: 0.72em; vertical-align: super; line-height: 0;">{inner}</sup>'
+
+    html_str = re.sub(r"[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻ⁿᵐᵏ⁽⁾]+", _sub_html_super, clean)
+    html_str = re.sub(
+        r"\^([0-9a-zA-Z+-]+)",
+        r'<sup style="font-size: 0.72em; vertical-align: super; line-height: 0;">\1</sup>',
+        html_str,
+    )
+    return html_str
+
+
+def to_latex_equation(expr: Any) -> str:
+    """Convert an expression or equation to clean LaTeX."""
+    if expr is None:
+        return ""
+    if isinstance(expr, sp.Eq):
+        return rf"{sp.latex(expr.lhs)} = {sp.latex(expr.rhs)}"
+    if isinstance(expr, sp.Expr):
+        return sp.latex(expr)
+    try:
+        sym = sp.sympify(str(expr))
+        return sp.latex(sym)
+    except Exception:
+        return str(expr)
 
 from tutor.core.solver import SymPySolver, TutorSolution
 from tutor.core.tutor import MathTutor
@@ -287,13 +341,13 @@ WORKSPACE_CONFIG: Dict[str, Dict[str, Any]] = {
         "key": "input_solve",
         "default": "3(2x - 4) + 5 = 2(x + 7) + 9",
         "op": "solve",
-        "placeholder": "e.g. 3(2x - 4) + 5 = 2(x + 7) + 9 or x^2 - 5x + 6 = 0",
+        "placeholder": "e.g. 3(2x - 4) + 5 = 2(x + 7) + 9 or x² - 5x + 6 = 0",
         "btn_label": "⚡ Solve Equation",
         "examples": [
             "3(2x - 4) + 5 = 2(x + 7) + 9",
-            "x^2 - 5x + 6 = 0",
+            "x² - 5x + 6 = 0",
             "2x + 3 = 11",
-            "x^2 - 4 = 0",
+            "x² - 4 = 0",
             "2(x + 3) - 4 = 3(x - 1) + 5",
         ],
     },
@@ -303,16 +357,16 @@ WORKSPACE_CONFIG: Dict[str, Dict[str, Any]] = {
         "icon": "🔍",
         "desc": "Simplify algebraic and rational expressions by canceling common factors and collecting like terms.",
         "key": "input_simp",
-        "default": "(x^2 - 1)/(x - 1)",
+        "default": "(x² - 1)/(x - 1)",
         "op": "simplify",
-        "placeholder": "e.g. (x^2 - 1)/(x - 1) or (2x + 4)/2",
+        "placeholder": "e.g. (x² - 1)/(x - 1) or (2x + 4)/2",
         "btn_label": "🔍 Simplify Expression",
         "examples": [
-            "(x^2 - 1)/(x - 1)",
-            "(x^2 - 4)/(x - 2)",
+            "(x² - 1)/(x - 1)",
+            "(x² - 4)/(x - 2)",
             "(2x + 4)/2",
-            "(x^3 - x)/(x - 1)",
-            "(x^2 + 2x + 1)/(x + 1)",
+            "(x³ - x)/(x - 1)",
+            "(x² + 2x + 1)/(x + 1)",
         ],
     },
     "🧩 Factorisation": {
@@ -321,16 +375,16 @@ WORKSPACE_CONFIG: Dict[str, Dict[str, Any]] = {
         "icon": "🧩",
         "desc": "Decompose polynomials into irreducible linear and quadratic factors over rational numbers.",
         "key": "input_factor",
-        "default": "x^2 + 5x + 6",
+        "default": "x² + 5x + 6",
         "op": "factor",
-        "placeholder": "e.g. x^2 + 5x + 6 or x^3 - 3x^2 + 3x - 1",
+        "placeholder": "e.g. x² + 5x + 6 or x³ - 3x² + 3x - 1",
         "btn_label": "🧩 Factor Polynomial",
         "examples": [
-            "x^2 + 5x + 6",
-            "x^2 - 4",
-            "2x^2 + 7x + 3",
-            "x^3 - 3x^2 + 3x - 1",
-            "x^4 - 16",
+            "x² + 5x + 6",
+            "x² - 4",
+            "2x² + 7x + 3",
+            "x³ - 3x² + 3x - 1",
+            "x⁴ - 16",
         ],
     },
     "📐 Expansion": {
@@ -346,9 +400,9 @@ WORKSPACE_CONFIG: Dict[str, Dict[str, Any]] = {
         "examples": [
             "(x + 2)(x + 3)",
             "(2x - 1)(3x + 4)",
-            "(x + 1)^3",
+            "(x + 1)³",
             "(x - 2)(x + 2)",
-            "(2x + 3)^2",
+            "(2x + 3)²",
         ],
     },
     "📈 Differentiation": {
@@ -357,17 +411,17 @@ WORKSPACE_CONFIG: Dict[str, Dict[str, Any]] = {
         "icon": "📈",
         "desc": "Compute exact analytical derivatives dy/dx using calculus product, quotient, and chain rules with dual-curve plots.",
         "key": "input_diff",
-        "default": "x^3*sin(x)",
+        "default": "x³ sin(x)",
         "op": "diff",
-        "placeholder": "e.g. x^3*sin(x) or Differentiate y = x^2 + 3x with respect to x",
+        "placeholder": "e.g. x³ sin(x) or Differentiate y = x² + 3x with respect to x",
         "btn_label": "📈 Differentiate & Plot",
         "examples": [
-            "x^3*sin(x)",
-            "Differentiate y = x^3 sin(x) with respect to x",
-            "Find dy/dx for y = x^2 + 3x",
-            "sin(x)*exp(x)",
-            "x^2 + 3x - 5",
-            "x*ln(x)",
+            "x³ sin(x)",
+            "Differentiate y = x³ sin(x) with respect to x",
+            "Find dy/dx for y = x² + 3x",
+            "sin(x) exp(x)",
+            "x² + 3x - 5",
+            "x ln(x)",
         ],
     },
     "📉 Integration": {
@@ -376,17 +430,17 @@ WORKSPACE_CONFIG: Dict[str, Dict[str, Any]] = {
         "icon": "📉",
         "desc": "Compute indefinite integrals (antiderivatives) or definite integrals with shaded signed-area plots.",
         "key": "input_integ",
-        "default": "x^2",
+        "default": "x²",
         "op": "integrate",
-        "placeholder": "e.g. x^2 or Integrate x^2 from 0 to 2",
+        "placeholder": "e.g. x² or Integrate x² from 0 to 2",
         "btn_label": "📉 Integrate & Plot",
         "examples": [
-            "x^2",
-            "3x^2 + 4x - 2",
+            "x²",
+            "3x² + 4x - 2",
             "sin(x)",
-            "x^2 from 0 to 2",
-            "exp(x)*sin(x)",
-            "1/(1 + x^2)",
+            "x² from 0 to 2",
+            "exp(x) sin(x)",
+            "1/(1 + x²)",
         ],
     },
     "📊 Function Graphing": {
@@ -395,16 +449,16 @@ WORKSPACE_CONFIG: Dict[str, Dict[str, Any]] = {
         "icon": "📊",
         "desc": "Visualise continuous single-variable functions y = f(x), observe asymptotic bounds, and identify real roots.",
         "key": "input_graph",
-        "default": "x^2 - 4",
+        "default": "x² - 4",
         "op": "graph",
-        "placeholder": "e.g. x^2 - 4 or sin(x) + cos(2*x)",
+        "placeholder": "e.g. x² - 4 or sin(x) + cos(2x)",
         "btn_label": "📊 Generate Graph",
         "examples": [
-            "x^2 - 4",
+            "x² - 4",
             "sin(x)",
-            "x^3 - 3x",
-            "1/(x^2 + 1)",
-            "x*exp(-x^2)",
+            "x³ - 3x",
+            "1/(x² + 1)",
+            "x exp(-x²)",
             "tan(x)",
         ],
     },
