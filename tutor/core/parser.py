@@ -96,9 +96,17 @@ class MathParser:
         }
         return d
 
+    # Mapping of unicode superscript characters to standard ASCII digits/operators
+    SUPERSCRIPT_MAP = {
+        "⁰": "0", "¹": "1", "²": "2", "³": "3", "⁴": "4",
+        "⁵": "5", "⁶": "6", "⁷": "7", "⁸": "8", "⁹": "9",
+        "⁺": "+", "⁻": "-", "ⁿ": "n", "ᵐ": "m", "ᵏ": "k",
+        "⁽": "(", "⁾": ")",
+    }
+
     @classmethod
     def sanitize_math_string(cls, raw: str) -> str:
-        """Sanitize raw text: strip LaTeX commands, backslashes, unicode symbols."""
+        """Sanitize raw text: strip LaTeX commands, backslashes, unicode symbols, and superscripts."""
         s = raw.strip()
         # Remove any LaTeX backslashes or line continuations
         s = s.replace(r"\left", "").replace(r"\right", "")
@@ -119,6 +127,13 @@ class MathParser:
         s = s.replace("–", "-").replace("—", "-").replace("−", "-")
         s = s.replace("×", "*").replace("·", "*").replace("÷", "/")
         s = s.replace("√", "sqrt")
+
+        # Convert unicode superscripts (e.g. x², x³, x⁴) to explicit exponent notation **(...)
+        def _sub_superscripts(m):
+            converted = "".join(cls.SUPERSCRIPT_MAP.get(c, c) for c in m.group(0))
+            return f"**({converted})"
+        s = re.sub(r"[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻ⁿᵐᵏ⁽⁾]+", _sub_superscripts, s)
+
         s = s.replace("^", "**")
 
         # Remove extra whitespace
@@ -369,3 +384,120 @@ class MathParser:
         if res.success and isinstance(res.parsed_object, sp.Expr):
             return res.parsed_object
         return None
+
+
+UNICODE_SUPERSCRIPTS = {
+    "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴",
+    "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹",
+    "+": "⁺", "-": "⁻", "n": "ⁿ", "m": "ᵐ", "k": "ᵏ",
+    "(": "⁽", ")": "⁾",
+}
+
+
+def to_superscript(exp_str: str) -> str:
+    """Convert exponent string into unicode superscript characters."""
+    exp_str = exp_str.strip().strip("()")
+    if all(c in UNICODE_SUPERSCRIPTS for c in exp_str):
+        return "".join(UNICODE_SUPERSCRIPTS[c] for c in exp_str)
+    return f"^{exp_str}"
+
+
+def format_math_display(expr: Any) -> str:
+    """Format mathematical expression/equation into clean human-readable notation.
+
+    Eliminates raw SymPy artifacts:
+    - Unwraps 'Eq(lhs, rhs)' into 'lhs = rhs'
+    - Converts raw powers '**2' or '^2' to floating superscripts '²'
+    - Strips explicit '*' multiplication between coefficients, variables, and parentheses
+    """
+    if expr is None:
+        return ""
+    if isinstance(expr, sp.Eq):
+        return f"{format_math_display(expr.lhs)} = {format_math_display(expr.rhs)}"
+
+    s = sp.sstr(expr) if not isinstance(expr, str) else expr.strip()
+
+    # Unwrap Eq(...) string representation
+    eq_match = re.match(r"^Eq\((.*),\s*(.*)\)$", s)
+    if eq_match:
+        return f"{format_math_display(eq_match.group(1))} = {format_math_display(eq_match.group(2))}"
+
+    # Convert powers **(...) or **n to superscripts
+    s = re.sub(r"\*\*\(([^)]+)\)", lambda m: to_superscript(m.group(1)), s)
+    s = re.sub(r"\*\*([0-9a-zA-Z+-]+)", lambda m: to_superscript(m.group(1)), s)
+    s = re.sub(r"\^([0-9a-zA-Z+-]+)", lambda m: to_superscript(m.group(1)), s)
+
+    # Clean multiplication signs:
+    # 1) Between parentheses: )(
+    s = re.sub(r"\)\s*\*\s*\(", ")(", s)
+    # 2) Number * letter or Number * (
+    s = re.sub(r"(\b\d+)\s*\*\s*([a-zA-Z\(])", r"\1\2", s)
+    # 3) Letter * (
+    s = re.sub(r"([a-zA-Z])\s*\*\s*\(", r"\1(", s)
+    # 4) ) * letter
+    s = re.sub(r"\)\s*\*\s*([a-zA-Z])", r")\1", s)
+    # 5) variable * function or variable (e.g. x*sin(x) -> x sin(x), x*y -> xy)
+    s = re.sub(r"([a-zA-Z0-9⁰¹²³⁴⁵⁶⁷⁸⁹]+)\s*\*\s*([a-zA-Z]+(?:\([^)]*\))?)", r"\1 \2", s)
+    # 6) Any remaining * between expressions
+    s = re.sub(r"\s*\*\s*", " · ", s)
+
+    # Clean formatting quirks
+    s = re.sub(r"\+\s*-", "- ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
+def format_to_html_math(expr: Any) -> str:
+    """Format mathematical expression into HTML with true floating <sup> tags.
+
+    Used in HTML cards so exponents visually float above the baseline consistently.
+    """
+    clean = format_math_display(expr)
+
+    rev_supers = {v: k for k, v in UNICODE_SUPERSCRIPTS.items()}
+
+    def _sub_html_super(m):
+        inner = "".join(rev_supers.get(c, c) for c in m.group(0))
+        return f'<sup style="font-size: 0.72em; vertical-align: super; line-height: 0;">{inner}</sup>'
+
+    html_str = re.sub(r"[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻ⁿᵐᵏ⁽⁾]+", _sub_html_super, clean)
+    html_str = re.sub(
+        r"\^([0-9a-zA-Z+-]+)",
+        r'<sup style="font-size: 0.72em; vertical-align: super; line-height: 0;">\1</sup>',
+        html_str,
+    )
+    return html_str
+
+
+def to_latex_equation(expr: Any) -> str:
+    """Convert an expression, equation, or equation string to clean LaTeX without Eq(...) wrapper."""
+    if expr is None:
+        return ""
+    if isinstance(expr, sp.Eq):
+        return rf"{sp.latex(expr.lhs)} = {sp.latex(expr.rhs)}"
+    if isinstance(expr, sp.Expr):
+        return sp.latex(expr)
+
+    s = str(expr).strip()
+    if s.startswith("Eq(") and s.endswith(")"):
+        eq_match = re.match(r"^Eq\((.*),\s*(.*)\)$", s)
+        if eq_match:
+            try:
+                lhs = sp.sympify(MathParser.sanitize_math_string(eq_match.group(1)))
+                rhs = sp.sympify(MathParser.sanitize_math_string(eq_match.group(2)))
+                return rf"{sp.latex(lhs)} = {sp.latex(rhs)}"
+            except Exception:
+                pass
+    if "=" in s:
+        parts = s.split("=", 1)
+        try:
+            lhs = sp.sympify(MathParser.sanitize_math_string(parts[0]))
+            rhs = sp.sympify(MathParser.sanitize_math_string(parts[1]))
+            return rf"{sp.latex(lhs)} = {sp.latex(rhs)}"
+        except Exception:
+            pass
+    try:
+        sym = sp.sympify(MathParser.sanitize_math_string(s))
+        return sp.latex(sym)
+    except Exception:
+        return s
