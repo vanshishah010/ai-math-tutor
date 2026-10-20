@@ -12,6 +12,7 @@ import logging
 from typing import Any, List, Optional
 
 from tutor.core.hints import HintGenerator, TutorHint
+from tutor.core.practice import PracticeGenerator, PracticeProblem
 from tutor.core.solver import SymPySolver, TutorSolution
 from tutor.core.verifier import StepFeedback, StepVerifier
 
@@ -48,6 +49,7 @@ class MathTutor:
         self.solver = SymPySolver(default_var=default_variable)
         self.verifier = StepVerifier(solver=self.solver)
         self.hint_generator = HintGenerator(solver=self.solver)
+        self.practice_generator = PracticeGenerator(solver=self.solver)
         self._explainer = None  # Lazy-loaded on demand if enable_llm is True
 
     def solve(
@@ -153,3 +155,37 @@ class MathTutor:
         if explainer and explainer.is_available():
             return explainer.generate_solution(problem)
         return ""
+
+    def generate_practice(
+        self,
+        problem: str,
+        operation: str = "solve",
+        difficulty: str = "Medium",
+        count: int = 3,
+        variable: Optional[str] = None,
+        seed: Optional[int] = None,
+    ) -> List[PracticeProblem]:
+        """Generate similar practice quiz problems with adjustable difficulty (Easy/Medium/Hard)."""
+        var = variable.strip() if (variable and variable.strip()) else self.default_variable
+        return self.practice_generator.generate(
+            problem=problem,
+            operation=operation,
+            variable=var,
+            difficulty=difficulty,
+            count=count,
+            seed=seed,
+        )
+
+    def check_practice_answer(
+        self,
+        student_answer: str,
+        expected_answer: str,
+        variable: Optional[str] = None,
+    ) -> Tuple[bool, str]:
+        """Verify student's practice problem response using symbolic evaluation."""
+        var = variable.strip() if (variable and variable.strip()) else self.default_variable
+        return self.practice_generator.check_answer(
+            student_answer=student_answer,
+            expected_answer=expected_answer,
+            variable=var,
+        )
