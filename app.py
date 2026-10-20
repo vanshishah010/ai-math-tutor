@@ -584,10 +584,12 @@ def render_practice_arena(tutor: MathTutor, problem: str, operation: str, variab
             gen_btn = st.button("🎲 Generate New Problems", key=f"quiz_gen_{target_key}", use_container_width=True)
 
         storage_key = f"quiz_problems_{target_key}"
-        curr_source_key = f"quiz_source_{target_key}"
+        curr_diff_key = f"quiz_diff_val_{target_key}"
+        diff_changed = st.session_state.get(curr_diff_key) != diff
 
-        # Generate on button click or if difficulty / problem changed
-        if gen_btn or (storage_key not in st.session_state) or (st.session_state.get(curr_source_key) != (problem, diff)):
+        # Generate on explicit button click, initial load, or if difficulty changed (do not wipe on problem solve)
+        if gen_btn or (storage_key not in st.session_state) or diff_changed:
+            st.session_state[curr_diff_key] = diff
             try:
                 if hasattr(tutor, "generate_practice"):
                     st.session_state[storage_key] = tutor.generate_practice(
@@ -607,7 +609,6 @@ def render_practice_arena(tutor: MathTutor, problem: str, operation: str, variab
                         count=3,
                         variable=variable,
                     )
-                st.session_state[curr_source_key] = (problem, diff)
             except Exception as e:
                 st.warning(f"Could not automatically generate practice problems: {e}")
                 # Provide lightweight fallback problems so the quiz arena is never blank
@@ -622,13 +623,15 @@ def render_practice_arena(tutor: MathTutor, problem: str, operation: str, variab
                     PracticeProblem(id=3, problem=f"({variable} - 1)*({variable} + 5)", operation="expand", difficulty="Medium", variable=variable, expected_answer=f"{variable}**2 + 4*{variable} - 5", expected_answer_latex=f"{variable}^2 + 4{variable} - 5", hint="Multiply terms pairwise.", problem_type="expansion"),
                 ]
                 st.session_state[storage_key] = fallback_probs
-                st.session_state[curr_source_key] = (problem, diff)
 
         practice_items = st.session_state.get(storage_key, [])
         if practice_items:
             for idx, p in enumerate(practice_items, start=1):
                 clean_prob_text = format_math_display(p.problem)
                 clean_prob_html = format_to_html_math(p.problem)
+                sol_state_key = f"show_sol_{target_key}_{idx}_{clean_prob_text}"
+                is_showing_sol = st.session_state.get(sol_state_key, False)
+
                 st.markdown(
                     f"""
                     <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px 16px; margin-top: 10px; margin-bottom: 8px; border-left: 4px solid #3b82f6;">
@@ -641,7 +644,7 @@ def render_practice_arena(tutor: MathTutor, problem: str, operation: str, variab
                     unsafe_allow_html=True,
                 )
 
-                col_ans, col_chk, col_load = st.columns([3, 1.2, 1.2])
+                col_ans, col_chk, col_load = st.columns([3, 1.3, 1.3])
                 with col_ans:
                     student_ans = st.text_input(
                         f"Your answer for #{idx}:",
@@ -656,14 +659,14 @@ def render_practice_arena(tutor: MathTutor, problem: str, operation: str, variab
                         use_container_width=True,
                     )
                 with col_load:
-                    st.button(
-                        "📥 Solver",
-                        key=f"btn_load_{target_key}_{idx}_{clean_prob_text}",
+                    if st.button(
+                        "🙈 Hide Steps" if is_showing_sol else "📖 Show Steps",
+                        key=f"btn_toggle_sol_{target_key}_{idx}_{clean_prob_text}",
                         use_container_width=True,
-                        help="Load problem into solver for full steps",
-                        on_click=load_preloaded_expression,
-                        args=(clean_prob_text, target_key, True),
-                    )
+                        help="View step-by-step derivation for this problem without losing current quiz",
+                    ):
+                        st.session_state[sol_state_key] = not is_showing_sol
+                        st.rerun()
 
                 if check_clicked:
                     if student_ans.strip():
@@ -679,6 +682,45 @@ def render_practice_arena(tutor: MathTutor, problem: str, operation: str, variab
                             st.error(f"❌ {msg}")
                     else:
                         st.warning("Please type your answer above before checking.")
+
+                # If student clicked "Show Steps" for this quiz problem:
+                if st.session_state.get(sol_state_key, False):
+                    with st.container():
+                        with st.spinner("Calculating step-by-step derivation..."):
+                            step_sol = tutor.solve(p.problem, operation=getattr(p, "operation", operation), variable=variable)
+
+                        if step_sol and step_sol.success:
+                            st.markdown(
+                                f"""
+                                <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 12px 16px; margin-top: 10px; margin-bottom: 8px; border-left: 4px solid #16a34a;">
+                                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                                        <span style="font-size: 0.75rem; font-weight: 700; color: #166534; background: #dcfce7; padding: 2px 7px; border-radius: 4px;">📖 Step-by-Step Solution for Problem {idx}</span>
+                                        <span style="font-size: 0.88rem; color: #15803d; font-weight: 600;">Answer: {step_sol.final_answer}</span>
+                                    </div>
+                                </div>
+                                """,
+                                unsafe_allow_html=True,
+                            )
+                            if step_sol.final_answer_latex:
+                                st.latex(step_sol.final_answer_latex)
+
+                            for s in step_sol.steps:
+                                st.markdown(
+                                    f"""
+                                    <div class="step-card" style="margin-bottom: 6px; padding: 8px 12px; background: #ffffff;">
+                                        <span class="step-badge">Step {s.step_number}</span>
+                                        <strong>{s.title}</strong>
+                                        <p style="margin: 4px 0; color: #334155; font-size: 0.92rem;">{s.description}</p>
+                                    </div>
+                                    """,
+                                    unsafe_allow_html=True,
+                                )
+                                if s.latex:
+                                    st.latex(s.latex)
+                                if s.rule_applied:
+                                    st.caption(f"Rule applied: {s.rule_applied}")
+                        else:
+                            st.info(f"Expected Answer: {p.expected_answer}")
 
                 with st.expander(f"💡 Need a hint for Problem {idx}?", expanded=False):
                     st.info(format_math_display(p.hint))
